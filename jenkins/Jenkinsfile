@@ -28,7 +28,7 @@ pipeline {
         script {
           // Si no se pasa TAG: main -> latest ; otras ramas -> hash corto
           env.EFFECTIVE_TAG = params.TAG?.trim() ? params.TAG.trim()
-                           : (env.BRANCH_NAME == 'main' ? 'latest' : env.GIT_COMMIT.take(7))
+                           : (env.GIT_COMMIT.take(7))
         }
         sh 'docker build -t ${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:${EFFECTIVE_TAG} .'
       }
