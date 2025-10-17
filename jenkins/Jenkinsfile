@@ -1,64 +1,72 @@
 pipeline {
   agent any
-  environment {
-    REGISTRY      = env.REGISTRY      ?: 'docker.io'
-    IMAGE_USER    = env.IMAGE_USER    ?: 'tu_usuario'
-    IMAGE_NAME    = env.IMAGE_NAME    ?: 'flask-cicd'
-    K8S_NAMESPACE = env.K8S_NAMESPACE ?: 'demo'
-  }
-  options { timeout(time: 30, unit: 'MINUTES'); timestamps() }
-  parameters {
-    string(name: 'DEPLOY_HOST', defaultValue: '127.0.0.1', description: 'Host de despliegue con kubectl')
-    string(name: 'TAG', defaultValue: '', description: 'Tag de la imagen (vacío=commit corto / main=latest)')
-  }
-  stages {
-    stage('Checkout'){ steps { checkout scm } }
 
-    stage('Unit tests'){
+  // Valores por defecto (puedes sobreescribirlos con variables globales de Jenkins si quieres)
+  environment {
+    REGISTRY      = 'docker.io'
+    IMAGE_USER    = 'jpe793'
+    IMAGE_NAME    = 'flask-cicd'
+    K8S_NAMESPACE = 'demo'
+  }
+
+  options { timeout(time: 30, unit: 'MINUTES'); timestamps() }
+
+  parameters {
+    string(name: 'DEPLOY_HOST', defaultValue: '172.17.0.1', description: 'Host con kubectl (desde Jenkins, 172.17.0.1 suele ser el host)')
+    string(name: 'TAG', defaultValue: '', description: 'Tag de la imagen (vacío = auto: latest en main o commit corto)')
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Unit tests') {
       steps { sh 'bash scripts/test_in_docker.sh' }
     }
 
-    stage('Build image'){
+    stage('Build image') {
       steps {
-        sh '''
-          set -e
-          EFFECTIVE_TAG="${TAG}"
-          if [ -z "$EFFECTIVE_TAG" ]; then
-            if [ "${BRANCH_NAME}" = "main" ]; then EFFECTIVE_TAG=latest; else EFFECTIVE_TAG=$(echo "${GIT_COMMIT}" | cut -c1-7); fi
-          fi
-          echo "$EFFECTIVE_TAG" > .tag
-          docker build -t ${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:$EFFECTIVE_TAG .
-        '''
+        script {
+          // Si no se pasa TAG: main -> latest ; otras ramas -> hash corto
+          env.EFFECTIVE_TAG = params.TAG?.trim() ? params.TAG.trim()
+                           : (env.BRANCH_NAME == 'main' ? 'latest' : env.GIT_COMMIT.take(7))
+        }
+        sh 'docker build -t ${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:${EFFECTIVE_TAG} .'
       }
     }
 
-    stage('Push image'){
+    stage('Push image') {
       steps {
         withCredentials([usernamePassword(credentialsId: 'docker-registry', usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
           sh '''
             set -e
-            EFFECTIVE_TAG=$(cat .tag)
             echo "$REG_PASS" | docker login -u "$REG_USER" ${REGISTRY} --password-stdin
-            docker push ${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:$EFFECTIVE_TAG
+            docker push ${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:${EFFECTIVE_TAG}
           '''
         }
       }
     }
 
-    stage('Deploy to Kubernetes (via SSH)'){
+    stage('Deploy to Kubernetes (via SSH)') {
       when { anyOf { branch 'main'; tag pattern: 'v*', comparator: 'GLOB' } }
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh', usernameVariable: 'SSH_USER', keyFileVariable: 'SSH_KEY')]) {
           sh '''
             set -e
-            EFFECTIVE_TAG=$(cat .tag)
-            IMAGE="${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:$EFFECTIVE_TAG"
+            # Copiamos manifiestos
             rsync -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" -avz k8s/ $SSH_USER@${DEPLOY_HOST}:~/k8s/
-            ssh -i $SSH_KEY -o StrictHostKeyChecking=no $SSH_USER@${DEPLOY_HOST} "IMAGE=\\"$IMAGE\\" K8S_NAMESPACE=\\"${K8S_NAMESPACE}\\" bash -s" < scripts/deploy_k8s.sh
+            # Ejecutamos el script remoto con las variables preparadas
+            ssh -i $SSH_KEY -o StrictHostKeyChecking=no $SSH_USER@${DEPLOY_HOST} \
+              "IMAGE='${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:${EFFECTIVE_TAG}' K8S_NAMESPACE='${K8S_NAMESPACE}' bash -s" \
+              < scripts/deploy_k8s.sh
           '''
         }
       }
+      post {
+        success { echo 'Despliegue completado.' }
+        failure { echo 'Fallo en el despliegue.' }
+      }
     }
   }
+
   post { always { archiveArtifacts artifacts: 'k8s/*.yaml', fingerprint: true } }
 }
