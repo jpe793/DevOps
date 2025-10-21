@@ -1,7 +1,6 @@
 pipeline {
   agent any
 
-  // Valores por defecto (puedes sobreescribirlos con variables globales de Jenkins si quieres)
   environment {
     REGISTRY      = 'docker.io'
     IMAGE_USER    = 'jpe793'
@@ -26,7 +25,6 @@ pipeline {
     stage('Build image') {
       steps {
         script {
-          // Si no se pasa TAG: main -> latest ; otras ramas -> hash corto
           env.EFFECTIVE_TAG = params.TAG?.trim() ? params.TAG.trim()
                            : (env.GIT_COMMIT.take(7))
         }
@@ -52,9 +50,7 @@ pipeline {
         withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh', usernameVariable: 'SSH_USER', keyFileVariable: 'SSH_KEY')]) {
           sh '''
             set -e
-            # Copiamos manifiestos
             rsync -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" -avz k8s/ $SSH_USER@${DEPLOY_HOST}:~/k8s/
-            # Ejecutamos el script remoto con las variables preparadas
             ssh -i $SSH_KEY -o StrictHostKeyChecking=no $SSH_USER@${DEPLOY_HOST} \
               "IMAGE='${REGISTRY}/${IMAGE_USER}/${IMAGE_NAME}:${EFFECTIVE_TAG}' K8S_NAMESPACE='${K8S_NAMESPACE}' bash -s" \
               < scripts/deploy_k8s.sh
