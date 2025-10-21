@@ -2,7 +2,6 @@
 set -euo pipefail
 
 if [[ -n "${WORKSPACE:-}" ]]; then
-  # Jenkins: el workspace está dentro del volumen 'jenkins_home'
   docker run --rm \
     -v jenkins_home:/var/jenkins_home:ro \
     -w "${WORKSPACE}" \
@@ -11,7 +10,6 @@ if [[ -n "${WORKSPACE:-}" ]]; then
       pip install -r app/requirements.txt pytest &&
       python -m pytest -q'
 else
-  # Local: monta la ruta del host actual
   docker run --rm \
     -v "$PWD":/ws \
     -w /ws \
