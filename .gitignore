@@ -1,15 +1,11 @@
-# Python
 __pycache__/
 *.pyc
 .venv/
 
-# Docker/compose
 *.log
 *.pid
 
-# Jenkins local (si lo usas fuera del repo)
 jenkins_home/
 
-# OS/editor
 .DS_Store
 *.swp
